@@ -10,7 +10,7 @@ import (
 	"github.com/UnicoYal/EventForge/internal/event_generator/wire"
 )
 
-var defaultConfigPath = "/usr/local/etc/event_generator.yaml"
+var defaultConfigPath = "config/event_generator.yaml"
 
 func main() {
 	var (
@@ -19,10 +19,14 @@ func main() {
 		duration  time.Duration
 	)
 
-	box, err := wire.InitializeBox(defaultConfigPath)
+	box, cleanup, err := wire.InitializeBox(defaultConfigPath)
 	if err != nil {
 		fmt.Printf("failed to InitializeBox: %v", err)
 		os.Exit(1)
+	}
+
+	if cleanup != nil {
+		defer cleanup()
 	}
 
 	flag.StringVar(&eventType, "event_type", box.Config.EventType, "The type of event to brute force")
@@ -31,5 +35,5 @@ func main() {
 
 	flag.Parse()
 
-	eventgenerator.Generate(eventType, rate, duration)
+	eventgenerator.Generate(box, eventType, rate, duration)
 }

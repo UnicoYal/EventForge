@@ -9,26 +9,47 @@ package wire
 import (
 	"fmt"
 	"github.com/UnicoYal/EventForge/internal/event_generator/config"
+	"github.com/panjf2000/ants/v2"
 	"github.com/stretchr/testify/assert/yaml"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"os"
 )
 
 // Injectors from wire.go:
 
-func InitializeBox(configPath string) (*Box, error) {
+func InitializeBox(configPath string) (*Box, func(), error) {
 	config, err := provideConfig(configPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	box := newBox(config)
-	return box, nil
+	clientConn, cleanup, err := provideIngestionConn(config)
+	if err != nil {
+		return nil, nil, err
+	}
+	pool, cleanup2, err := provideWorkerPool(config)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	box := newBox(config, clientConn, pool)
+	return box, func() {
+		cleanup2()
+		cleanup()
+	}, nil
 }
 
 // wire.go:
 
-func newBox(conf *config.Config) *Box {
+func newBox(
+	conf *config.Config,
+	ingestionClient interface{},
+	wp *ants.Pool,
+) *Box {
 	return &Box{
-		Config: *conf,
+		Config:        *conf,
+		IngestionClient: ingestionClient,
+		WorkerPool:    wp,
 	}
 }
 
@@ -45,4 +66,35 @@ func provideConfig(configPath string) (*config.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func provideIngestionConn(config2 *config.Config) (*grpc.ClientConn, func(), error) {
+	conn, err := grpc.NewClient(config2.
+		IngestionEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultServiceConfig(fmt.Sprintf(`{"loadBalancingPolicy": "%s"}`, config2.LoadBalancePolicy)),
+	)
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot establish conn with ingestion service: %w", err)
+	}
+
+	cleanup := func() {
+		conn.Close()
+	}
+
+	return conn, cleanup, nil
+}
+
+func provideWorkerPool(config2 *config.Config) (*ants.Pool, func(), error) {
+	pool, err := ants.NewPool(config2.
+		WorkerPool.Size, ants.WithMaxBlockingTasks(0), ants.WithNonblocking(true),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot initialize worker pool: %w", err)
+	}
+
+	cleanup := func() {
+		pool.ReleaseTimeout(config2.WorkerPool.ReleaseTimeout)
+	}
+
+	return pool, cleanup, nil
 }

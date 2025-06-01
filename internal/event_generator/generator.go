@@ -7,18 +7,12 @@ import (
 	"time"
 
 	"github.com/UnicoYal/EventForge/internal/event_generator/models"
-	"github.com/panjf2000/ants/v2"
+	"github.com/UnicoYal/EventForge/internal/event_generator/wire"
 )
 
-func Generate(eventType string, rate int, duration time.Duration) {
+func Generate(box *wire.Box, eventType string, rate int, duration time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
-
-	pool, err := ants.NewPool(rate)
-	if err != nil {
-		fmt.Printf("cannot initialize worker pool: %v", err)
-		return
-	}
 
 	for {
 		select {
@@ -26,8 +20,8 @@ func Generate(eventType string, rate int, duration time.Duration) {
 			fmt.Println("ctx done")
 			return
 		default:
-			err := pool.Submit(func() {
-				sendEvent(eventType)
+			err := box.WorkerPool.Submit(func() {
+				sendEvent(box.IngestionClient, eventType)
 			})
 
 			if err != nil {
@@ -37,7 +31,7 @@ func Generate(eventType string, rate int, duration time.Duration) {
 	}
 }
 
-func sendEvent(eventType string) {
+func sendEvent(client interface{}, eventType string) {
 	payload := generatePayload(eventType)
 	event := models.Event{
 		Type:      eventType,
